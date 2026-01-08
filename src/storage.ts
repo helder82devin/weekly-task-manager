@@ -363,3 +363,45 @@ export function ensureProjectInWeek(
     ),
   };
 }
+
+export function reorderTasks(
+  data: StorageRoot,
+  weekId: string,
+  projectId: string,
+  taskIds: string[]
+): StorageRoot {
+  return {
+    ...data,
+    weeks: data.weeks.map((w) =>
+      w.id === weekId
+        ? {
+            ...w,
+            projects: w.projects.map((p) =>
+              p.projectId === projectId
+                ? {
+                    ...p,
+                    tasks: taskIds
+                      .map((id) => p.tasks.find((t) => t.id === id))
+                      .filter((t): t is Task => t !== undefined),
+                  }
+                : p
+            ),
+          }
+        : w
+    ),
+  };
+}
+
+export function reorderProjects(
+  data: StorageRoot,
+  projectIds: string[]
+): StorageRoot {
+  const reorderedProjects = projectIds
+    .map((id) => data.projectsIndex.find((p) => p.id === id))
+    .filter((p): p is ProjectIndex => p !== undefined);
+  
+  return {
+    ...data,
+    projectsIndex: reorderedProjects,
+  };
+}

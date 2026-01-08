@@ -25,6 +25,8 @@ import {
   countUrgentTasks,
   getProjectTitle,
   ensureProjectInWeek,
+  reorderTasks,
+  reorderProjects,
 } from "./storage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,7 +68,26 @@ import {
   X,
   Check,
   AlertTriangle,
+  GripVertical,
+  Pencil,
 } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 const STATUS_OPTIONS: ProjectStatus[] = ["to do", "in progress", "blocked", "done"];
 
@@ -76,6 +97,190 @@ const STATUS_COLORS: Record<ProjectStatus, string> = {
   blocked: "bg-red-200 text-red-700",
   done: "bg-green-200 text-green-700",
 };
+
+// Sortable Task Component
+function SortableTask({
+  task,
+  projectId,
+  weekId,
+  canEdit,
+  isEditing,
+  editingTaskText,
+  setEditingTaskText,
+  handleSaveTaskText,
+  setEditingTaskId,
+  handleToggleTaskComplete,
+  handleToggleTaskUrgent,
+  handleDeleteTask,
+}: {
+  task: Task;
+  projectId: string;
+  weekId: string;
+  canEdit: boolean;
+  isEditing: boolean;
+  editingTaskText: string;
+  setEditingTaskText: (text: string) => void;
+  handleSaveTaskText: () => void;
+  setEditingTaskId: (id: string | null) => void;
+  handleToggleTaskComplete: (weekId: string, projectId: string, taskId: string, completed: boolean) => void;
+  handleToggleTaskUrgent: (weekId: string, projectId: string, taskId: string, urgent: boolean) => void;
+  handleDeleteTask: (weekId: string, projectId: string, taskId: string) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: task.id, disabled: !canEdit });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center gap-2 py-1 px-2 rounded hover:bg-solarized-base2 group ${
+        task.completed ? "opacity-60" : ""
+      }`}
+    >
+      {canEdit && (
+        <div {...attributes} {...listeners} className="cursor-grab">
+          <GripVertical className="h-3 w-3 text-solarized-base1" />
+        </div>
+      )}
+      <Checkbox
+        checked={task.completed}
+        onCheckedChange={(checked) =>
+          canEdit && handleToggleTaskComplete(weekId, projectId, task.id, checked as boolean)
+        }
+        disabled={!canEdit}
+        className="border-solarized-base1"
+      />
+      {isEditing ? (
+        <Input
+          value={editingTaskText}
+          onChange={(e) => setEditingTaskText(e.target.value)}
+          onBlur={handleSaveTaskText}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSaveTaskText();
+            if (e.key === "Escape") setEditingTaskId(null);
+          }}
+          autoFocus
+          className="flex-1 h-7 font-mono text-sm bg-solarized-base3 border-solarized-base1"
+        />
+      ) : (
+        <span
+          className={`flex-1 text-sm ${
+            task.completed ? "line-through text-solarized-base1" : ""
+          } ${task.urgent ? "font-bold text-solarized-red" : ""}`}
+        >
+          {task.text}
+        </span>
+      )}
+      {canEdit && (
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 text-solarized-base1"
+            onClick={() => {
+              setEditingTaskId(task.id);
+              setEditingTaskText(task.text);
+            }}
+            title="Edit task"
+          >
+            <Pencil className="h-3 w-3" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`h-6 w-6 p-0 ${task.urgent ? "text-solarized-red" : "text-solarized-base1"}`}
+            onClick={() => handleToggleTaskUrgent(weekId, projectId, task.id, !task.urgent)}
+            title={task.urgent ? "Remove urgent" : "Mark urgent"}
+          >
+            <AlertTriangle className="h-3 w-3" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 text-solarized-base1 hover:text-solarized-red"
+            onClick={() => handleDeleteTask(weekId, projectId, task.id)}
+          >
+            <Trash2 className="h-3 w-3" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Sortable Project Component for Sidebar
+function SortableProject({
+  project,
+  snapshot,
+  uncheckedCount,
+  isSelected,
+  onSelect,
+}: {
+  project: { id: string; title: string };
+  snapshot: ProjectSnapshot | undefined;
+  uncheckedCount: number;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: project.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center gap-1 px-2 py-2 rounded cursor-pointer mb-1 ${
+        isSelected
+          ? "bg-solarized-base3 text-solarized-base01"
+          : "hover:bg-solarized-base3 text-solarized-base00"
+      }`}
+      onClick={onSelect}
+    >
+      <div {...attributes} {...listeners} className="cursor-grab">
+        <GripVertical className="h-3 w-3 text-solarized-base1" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium break-words">{project.title}</div>
+        {snapshot && (
+          <div
+            className={`text-xs mt-0.5 ${STATUS_COLORS[snapshot.status]} px-1 rounded inline-block`}
+          >
+            {snapshot.status}
+          </div>
+        )}
+      </div>
+      {uncheckedCount > 0 && (
+        <span className="text-xs bg-solarized-base1 text-solarized-base3 px-1.5 py-0.5 rounded-full ml-2">
+          {uncheckedCount}
+        </span>
+      )}
+    </div>
+  );
+}
 
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
@@ -115,7 +320,18 @@ function App() {
   const [newTaskText, setNewTaskText] = useState<Record<string, string>>({});
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editingTaskText, setEditingTaskText] = useState("");
+  const [sidebarWidth, setSidebarWidth] = useState(256);
+  const [isResizing, setIsResizing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   useEffect(() => {
     const stored = loadStorage();
@@ -385,6 +601,101 @@ function App() {
     });
   }, []);
 
+  const handleExpandAll = useCallback(() => {
+    if (!data) return;
+    const allProjectIds = data.projectsIndex.map((p) => p.id);
+    setExpandedProjects(new Set(allProjectIds));
+  }, [data]);
+
+  const handleCollapseAll = useCallback(() => {
+    setExpandedProjects(new Set());
+  }, []);
+
+  const handleTaskDragEnd = useCallback(
+    (event: DragEndEvent, projectId: string, weekId: string) => {
+      if (!data) return;
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+
+      const week = data.weeks.find((w) => w.id === weekId);
+      if (!week) return;
+
+      const snapshot = week.projects.find((p) => p.projectId === projectId);
+      if (!snapshot) return;
+
+      const oldIndex = snapshot.tasks.findIndex((t) => t.id === active.id);
+      const overIndex = snapshot.tasks.findIndex((t) => t.id === over.id);
+
+      if (oldIndex === -1 || overIndex === -1) return;
+
+      const newTaskIds = arrayMove(
+        snapshot.tasks.map((t) => t.id),
+        oldIndex,
+        overIndex
+      );
+
+      const newData = reorderTasks(data, weekId, projectId, newTaskIds);
+      persist(newData);
+    },
+    [data, persist]
+  );
+
+  const handleProjectDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      if (!data) return;
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+
+      // Don't allow moving BAU
+      if (active.id === "bau") return;
+
+      // Get projects excluding BAU (BAU is always at the bottom)
+      const projectsWithoutBAU = data.projectsIndex.filter((p) => p.id !== "bau");
+      const bauProject = data.projectsIndex.find((p) => p.id === "bau");
+
+      const oldIndex = projectsWithoutBAU.findIndex((p) => p.id === active.id);
+      const overIndex = projectsWithoutBAU.findIndex((p) => p.id === over.id);
+
+      if (oldIndex === -1 || overIndex === -1) return;
+
+      const reorderedWithoutBAU = arrayMove(projectsWithoutBAU, oldIndex, overIndex);
+      const newProjectIds = bauProject
+        ? [...reorderedWithoutBAU.map((p) => p.id), bauProject.id]
+        : reorderedWithoutBAU.map((p) => p.id);
+
+      const newData = reorderProjects(data, newProjectIds);
+      persist(newData);
+    },
+    [data, persist]
+  );
+
+  // Sidebar resize handlers
+  const handleMouseDown = useCallback(() => {
+    setIsResizing(true);
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      const newWidth = Math.max(200, Math.min(500, e.clientX));
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    if (isResizing) {
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizing]);
+
   if (!data) {
     return (
       <div className="flex items-center justify-center h-screen bg-solarized-base3 font-mono">
@@ -413,76 +724,6 @@ function App() {
     return snapshot?.tasks.filter((t) => !t.completed).length || 0;
   };
 
-  const renderTask = (task: Task, projectId: string, weekId: string) => {
-    const isEditing = editingTaskId === task.id;
-
-    return (
-      <div
-        key={task.id}
-        className={`flex items-center gap-2 py-1 px-2 rounded hover:bg-solarized-base2 group ${
-          task.completed ? "opacity-60" : ""
-        }`}
-      >
-        <Checkbox
-          checked={task.completed}
-          onCheckedChange={(checked) =>
-            canEdit && handleToggleTaskComplete(weekId, projectId, task.id, checked as boolean)
-          }
-          disabled={!canEdit}
-          className="border-solarized-base1"
-        />
-        {isEditing ? (
-          <Input
-            value={editingTaskText}
-            onChange={(e) => setEditingTaskText(e.target.value)}
-            onBlur={handleSaveTaskText}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleSaveTaskText();
-              if (e.key === "Escape") setEditingTaskId(null);
-            }}
-            autoFocus
-            className="flex-1 h-7 font-mono text-sm bg-solarized-base3 border-solarized-base1"
-          />
-        ) : (
-          <span
-            className={`flex-1 text-sm cursor-pointer ${
-              task.completed ? "line-through text-solarized-base1" : ""
-            } ${task.urgent ? "font-bold text-solarized-red" : ""}`}
-            onClick={() => {
-              if (canEdit) {
-                setEditingTaskId(task.id);
-                setEditingTaskText(task.text);
-              }
-            }}
-          >
-            {task.text}
-          </span>
-        )}
-        {canEdit && (
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <Button
-              variant="ghost"
-              size="sm"
-              className={`h-6 w-6 p-0 ${task.urgent ? "text-solarized-red" : "text-solarized-base1"}`}
-              onClick={() => handleToggleTaskUrgent(weekId, projectId, task.id, !task.urgent)}
-              title={task.urgent ? "Remove urgent" : "Mark urgent"}
-            >
-              <AlertTriangle className="h-3 w-3" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 p-0 text-solarized-base1 hover:text-solarized-red"
-              onClick={() => handleDeleteTask(weekId, projectId, task.id)}
-            >
-              <Trash2 className="h-3 w-3" />
-            </Button>
-          </div>
-        )}
-      </div>
-    );
-  };
-
   const renderProjectCard = (projectId: string, weekId: string) => {
     const project = data.projectsIndex.find((p) => p.id === projectId);
     if (!project) return null;
@@ -491,6 +732,16 @@ function App() {
     const tasks = snapshot?.tasks || [];
     const isExpanded = expandedProjects.has(projectId);
     const isEditingTitle = editingProjectId === projectId;
+
+    // Sort tasks: uncompleted first, completed last
+    const sortedTasks = [...tasks].sort((a, b) => {
+      if (a.completed === b.completed) return 0;
+      return a.completed ? 1 : -1;
+    });
+
+    // Calculate task counts
+    const uncheckedCount = tasks.filter((t) => !t.completed).length;
+    const urgentCount = tasks.filter((t) => t.urgent && !t.completed).length;
 
     return (
       <Collapsible
@@ -536,7 +787,19 @@ function App() {
                 </Button>
               </div>
             ) : (
-              <span className="font-semibold text-solarized-base01 flex-1">{project.title}</span>
+              <div className="flex items-center gap-2 flex-1">
+                <span className="font-semibold text-solarized-base01">{project.title}</span>
+                {uncheckedCount > 0 && (
+                  <span className="text-xs text-solarized-base1 flex items-center gap-1">
+                    {uncheckedCount}
+                    {urgentCount > 0 && (
+                      <span className="text-solarized-red flex items-center">
+                        ({urgentCount} <AlertTriangle className="h-3 w-3 ml-0.5" />)
+                      </span>
+                    )}
+                  </span>
+                )}
+              </div>
             )}
             {snapshot && (
               <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
@@ -593,7 +856,34 @@ function App() {
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="px-3 pb-3 pt-1 border-t border-solarized-base2">
-            {tasks.map((task) => renderTask(task, projectId, weekId))}
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={(event) => handleTaskDragEnd(event, projectId, weekId)}
+            >
+              <SortableContext
+                items={sortedTasks.map((t) => t.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {sortedTasks.map((task) => (
+                  <SortableTask
+                    key={task.id}
+                    task={task}
+                    projectId={projectId}
+                    weekId={weekId}
+                    canEdit={canEdit}
+                    isEditing={editingTaskId === task.id}
+                    editingTaskText={editingTaskText}
+                    setEditingTaskText={setEditingTaskText}
+                    handleSaveTaskText={handleSaveTaskText}
+                    setEditingTaskId={setEditingTaskId}
+                    handleToggleTaskComplete={handleToggleTaskComplete}
+                    handleToggleTaskUrgent={handleToggleTaskUrgent}
+                    handleDeleteTask={handleDeleteTask}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
             {canEdit && (
               <div className="flex items-center gap-2 mt-2">
                 <Input
@@ -626,13 +916,23 @@ function App() {
   const renderWeeklyView = () => {
     if (!selectedWeek) return null;
 
+    const weekNum = getWeekNumber(selectedWeek.startDate);
+
     return (
       <div>
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="text-lg font-semibold text-solarized-base01">
-              Week of {formatDate(selectedWeek.startDate)}
-            </h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-semibold text-solarized-base01">
+                Week #{weekNum}
+              </h2>
+              <span
+                className="text-sm text-solarized-blue cursor-pointer hover:underline"
+                onClick={expandedProjects.size === data.projectsIndex.length ? handleCollapseAll : handleExpandAll}
+              >
+                {expandedProjects.size === data.projectsIndex.length ? "collapse all" : "expand all"}
+              </span>
+            </div>
             <p className="text-sm text-solarized-base1">
               {formatDate(selectedWeek.startDate)} - {formatDate(selectedWeek.endDate)}
             </p>
@@ -849,10 +1149,18 @@ function App() {
     );
   };
 
+  // Separate BAU from other projects for sidebar
+  const projectsWithoutBAU = data.projectsIndex.filter((p) => p.id !== "bau");
+  const bauProject = data.projectsIndex.find((p) => p.id === "bau");
+
   return (
     <div className="flex h-screen bg-solarized-base3 font-mono text-solarized-base00">
       {/* Sidebar */}
-      <div className="w-64 border-r border-solarized-base2 bg-solarized-base2 flex flex-col">
+      <div
+        ref={sidebarRef}
+        style={{ width: sidebarWidth }}
+        className="border-r border-solarized-base2 bg-solarized-base2 flex flex-col relative"
+      >
         <div className="p-4 border-b border-solarized-base1">
           <h1 className="text-lg font-bold text-solarized-base01">Weekly Tasks</h1>
         </div>
@@ -870,40 +1178,72 @@ function App() {
               <Plus className="h-3 w-3" />
             </Button>
           </div>
-          {data.projectsIndex.map((project) => {
-            const snapshot = activeWeek?.projects.find((p) => p.projectId === project.id);
-            const uncheckedCount = getUncheckedCount(project.id);
-            const isSelected = selectedProjectId === project.id;
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleProjectDragEnd}
+          >
+            <SortableContext
+              items={projectsWithoutBAU.map((p) => p.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              {projectsWithoutBAU.map((project) => {
+                const snapshot = activeWeek?.projects.find((p) => p.projectId === project.id);
+                const uncheckedCount = getUncheckedCount(project.id);
+                const isSelected = selectedProjectId === project.id;
 
-            return (
-              <div
-                key={project.id}
-                className={`flex items-center justify-between px-2 py-2 rounded cursor-pointer mb-1 ${
-                  isSelected
-                    ? "bg-solarized-base3 text-solarized-base01"
-                    : "hover:bg-solarized-base3 text-solarized-base00"
-                }`}
-                onClick={() => setSelectedProjectId(isSelected ? null : project.id)}
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">{project.title}</div>
-                  {snapshot && (
-                    <div
-                      className={`text-xs mt-0.5 ${STATUS_COLORS[snapshot.status]} px-1 rounded inline-block`}
-                    >
-                      {snapshot.status}
-                    </div>
+                return (
+                  <SortableProject
+                    key={project.id}
+                    project={project}
+                    snapshot={snapshot}
+                    uncheckedCount={uncheckedCount}
+                    isSelected={isSelected}
+                    onSelect={() => setSelectedProjectId(isSelected ? null : project.id)}
+                  />
+                );
+              })}
+            </SortableContext>
+          </DndContext>
+        </div>
+
+        {/* BAU Project - Fixed at bottom */}
+        {bauProject && (
+          <div className="p-2 border-t border-solarized-base1">
+            {(() => {
+              const snapshot = activeWeek?.projects.find((p) => p.projectId === bauProject.id);
+              const uncheckedCount = getUncheckedCount(bauProject.id);
+              const isSelected = selectedProjectId === bauProject.id;
+
+              return (
+                <div
+                  className={`flex items-center gap-1 px-2 py-2 rounded cursor-pointer ${
+                    isSelected
+                      ? "bg-solarized-base3 text-solarized-base01"
+                      : "hover:bg-solarized-base3 text-solarized-base00"
+                  }`}
+                  onClick={() => setSelectedProjectId(isSelected ? null : bauProject.id)}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium break-words">{bauProject.title}</div>
+                    {snapshot && (
+                      <div
+                        className={`text-xs mt-0.5 ${STATUS_COLORS[snapshot.status]} px-1 rounded inline-block`}
+                      >
+                        {snapshot.status}
+                      </div>
+                    )}
+                  </div>
+                  {uncheckedCount > 0 && (
+                    <span className="text-xs bg-solarized-base1 text-solarized-base3 px-1.5 py-0.5 rounded-full ml-2">
+                      {uncheckedCount}
+                    </span>
                   )}
                 </div>
-                {uncheckedCount > 0 && (
-                  <span className="text-xs bg-solarized-base1 text-solarized-base3 px-1.5 py-0.5 rounded-full ml-2">
-                    {uncheckedCount}
-                  </span>
-                )}
-              </div>
-            );
-          })}
-        </div>
+              );
+            })()}
+          </div>
+        )}
 
         {/* Week Selector */}
         <div className="p-2 border-t border-solarized-base1">
@@ -952,6 +1292,13 @@ function App() {
             Import Data
           </Button>
         </div>
+
+        {/* Resize Handle */}
+        <div
+          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-solarized-blue transition-colors"
+          onMouseDown={handleMouseDown}
+          style={{ backgroundColor: isResizing ? "var(--solarized-blue)" : "transparent" }}
+        />
       </div>
 
       {/* Main Content */}
