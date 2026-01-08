@@ -69,7 +69,6 @@ import {
   Check,
   AlertTriangle,
   GripVertical,
-  Pencil,
 } from "lucide-react";
 import {
   DndContext,
@@ -176,27 +175,21 @@ function SortableTask({
         />
       ) : (
         <span
-          className={`flex-1 text-sm ${
+          className={`flex-1 text-sm cursor-pointer ${
             task.completed ? "line-through text-solarized-base1" : ""
           } ${task.urgent ? "font-bold text-solarized-red" : ""}`}
+          onClick={() => {
+            if (canEdit) {
+              setEditingTaskId(task.id);
+              setEditingTaskText(task.text);
+            }
+          }}
         >
           {task.text}
         </span>
       )}
       {canEdit && (
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 w-6 p-0 text-solarized-base1"
-            onClick={() => {
-              setEditingTaskId(task.id);
-              setEditingTaskText(task.text);
-            }}
-            title="Edit task"
-          >
-            <Pencil className="h-3 w-3" />
-          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -225,12 +218,14 @@ function SortableProject({
   project,
   snapshot,
   uncheckedCount,
+  urgentCount,
   isSelected,
   onSelect,
 }: {
   project: { id: string; title: string };
   snapshot: ProjectSnapshot | undefined;
   uncheckedCount: number;
+  urgentCount: number;
   isSelected: boolean;
   onSelect: () => void;
 }) {
@@ -255,7 +250,7 @@ function SortableProject({
       style={style}
       className={`flex items-center gap-1 px-2 py-2 rounded cursor-pointer mb-1 ${
         isSelected
-          ? "bg-solarized-base3 text-solarized-base01"
+          ? "bg-solarized-cyan text-solarized-base3 font-semibold"
           : "hover:bg-solarized-base3 text-solarized-base00"
       }`}
       onClick={onSelect}
@@ -274,8 +269,15 @@ function SortableProject({
         )}
       </div>
       {uncheckedCount > 0 && (
-        <span className="text-xs bg-solarized-base1 text-solarized-base3 px-1.5 py-0.5 rounded-full ml-2">
+        <span className="text-xs bg-solarized-base1 text-solarized-base3 px-1.5 py-0.5 rounded-full ml-2 flex items-center gap-1">
           {uncheckedCount}
+          {urgentCount > 0 && (
+            <>
+              <span className="text-solarized-base3">({urgentCount}</span>
+              <AlertTriangle className="h-2.5 w-2.5 text-solarized-orange" />
+              <span className="text-solarized-base3">)</span>
+            </>
+          )}
         </span>
       )}
     </div>
@@ -301,6 +303,11 @@ function getWeekNumber(dateStr: string): number {
 function getQuarter(dateStr: string): number {
   const month = new Date(dateStr).getMonth();
   return Math.floor(month / 3) + 1;
+}
+
+// Helper to clean task text: trim whitespace and trailing punctuation
+function cleanTaskText(text: string): string {
+  return text.trim().replace(/[.,;:!?]+$/, "").trim();
 }
 
 function App() {
@@ -420,10 +427,11 @@ function App() {
     (weekId: string, projectId: string) => {
       if (!data) return;
       const text = newTaskText[projectId];
-      if (!text?.trim()) return;
+      const cleanedText = cleanTaskText(text || "");
+      if (!cleanedText) return;
 
       let newData = ensureProjectInWeek(data, weekId, projectId);
-      newData = addTask(newData, weekId, projectId, text.trim(), false);
+      newData = addTask(newData, weekId, projectId, cleanedText, false);
 
       persist(newData);
       setNewTaskText((prev) => ({ ...prev, [projectId]: "" }));
@@ -434,7 +442,9 @@ function App() {
   const handleToggleTaskComplete = useCallback(
     (weekId: string, projectId: string, taskId: string, completed: boolean) => {
       if (!data) return;
-      const newData = updateTask(data, weekId, projectId, taskId, { completed });
+      // When marking as done, also remove urgency
+      const updates = completed ? { completed, urgent: false } : { completed };
+      const newData = updateTask(data, weekId, projectId, taskId, updates);
       persist(newData);
     },
     [data, persist]
@@ -466,8 +476,9 @@ function App() {
     for (const project of week.projects) {
       const task = project.tasks.find((t) => t.id === editingTaskId);
       if (task) {
+        const cleanedText = cleanTaskText(editingTaskText);
         const newData = updateTask(data, selectedWeekId, project.projectId, editingTaskId, {
-          text: editingTaskText.trim() || task.text,
+          text: cleanedText || task.text,
         });
         persist(newData);
         break;
@@ -722,6 +733,12 @@ function App() {
     if (!activeWeek) return 0;
     const snapshot = activeWeek.projects.find((p) => p.projectId === projectId);
     return snapshot?.tasks.filter((t) => !t.completed).length || 0;
+  };
+
+  const getUrgentCount = (projectId: string): number => {
+    if (!activeWeek) return 0;
+    const snapshot = activeWeek.projects.find((p) => p.projectId === projectId);
+    return snapshot?.tasks.filter((t) => t.urgent && !t.completed).length || 0;
   };
 
   const renderProjectCard = (projectId: string, weekId: string) => {
@@ -1187,22 +1204,24 @@ function App() {
               items={projectsWithoutBAU.map((p) => p.id)}
               strategy={verticalListSortingStrategy}
             >
-              {projectsWithoutBAU.map((project) => {
-                const snapshot = activeWeek?.projects.find((p) => p.projectId === project.id);
-                const uncheckedCount = getUncheckedCount(project.id);
-                const isSelected = selectedProjectId === project.id;
+                {projectsWithoutBAU.map((project) => {
+                  const snapshot = activeWeek?.projects.find((p) => p.projectId === project.id);
+                  const uncheckedCount = getUncheckedCount(project.id);
+                  const urgentCount = getUrgentCount(project.id);
+                  const isSelected = selectedProjectId === project.id;
 
-                return (
-                  <SortableProject
-                    key={project.id}
-                    project={project}
-                    snapshot={snapshot}
-                    uncheckedCount={uncheckedCount}
-                    isSelected={isSelected}
-                    onSelect={() => setSelectedProjectId(isSelected ? null : project.id)}
-                  />
-                );
-              })}
+                  return (
+                    <SortableProject
+                      key={project.id}
+                      project={project}
+                      snapshot={snapshot}
+                      uncheckedCount={uncheckedCount}
+                      urgentCount={urgentCount}
+                      isSelected={isSelected}
+                      onSelect={() => setSelectedProjectId(isSelected ? null : project.id)}
+                    />
+                  );
+                })}
             </SortableContext>
           </DndContext>
         </div>
@@ -1213,13 +1232,14 @@ function App() {
             {(() => {
               const snapshot = activeWeek?.projects.find((p) => p.projectId === bauProject.id);
               const uncheckedCount = getUncheckedCount(bauProject.id);
+              const urgentCount = getUrgentCount(bauProject.id);
               const isSelected = selectedProjectId === bauProject.id;
 
               return (
                 <div
                   className={`flex items-center gap-1 px-2 py-2 rounded cursor-pointer ${
                     isSelected
-                      ? "bg-solarized-base3 text-solarized-base01"
+                      ? "bg-solarized-cyan text-solarized-base3 font-semibold"
                       : "hover:bg-solarized-base3 text-solarized-base00"
                   }`}
                   onClick={() => setSelectedProjectId(isSelected ? null : bauProject.id)}
@@ -1235,8 +1255,15 @@ function App() {
                     )}
                   </div>
                   {uncheckedCount > 0 && (
-                    <span className="text-xs bg-solarized-base1 text-solarized-base3 px-1.5 py-0.5 rounded-full ml-2">
+                    <span className="text-xs bg-solarized-base1 text-solarized-base3 px-1.5 py-0.5 rounded-full ml-2 flex items-center gap-1">
                       {uncheckedCount}
+                      {urgentCount > 0 && (
+                        <>
+                          <span className="text-solarized-base3">({urgentCount}</span>
+                          <AlertTriangle className="h-2.5 w-2.5 text-solarized-orange" />
+                          <span className="text-solarized-base3">)</span>
+                        </>
+                      )}
                     </span>
                   )}
                 </div>
