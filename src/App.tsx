@@ -185,7 +185,7 @@ function SortableTask({
             }
           }}
         >
-          {task.text}
+          {renderTaskTextWithLinks(task.text)}
         </span>
       )}
       {canEdit && (
@@ -308,6 +308,38 @@ function getQuarter(dateStr: string): number {
 // Helper to clean task text: trim whitespace and trailing punctuation
 function cleanTaskText(text: string): string {
   return text.trim().replace(/[.,;:!?]+$/, "").trim();
+}
+
+// URL regex pattern
+const URL_REGEX = /(https?:\/\/[^\s]+)/g;
+
+// Helper to render task text with clickable links
+function renderTaskTextWithLinks(text: string): React.ReactNode {
+  const parts = text.split(URL_REGEX);
+  
+  if (parts.length === 1) {
+    return text;
+  }
+  
+  return parts.map((part, index) => {
+    if (URL_REGEX.test(part)) {
+      // Reset regex lastIndex since we're using global flag
+      URL_REGEX.lastIndex = 0;
+      return (
+        <a
+          key={index}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-solarized-blue hover:underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          (link)
+        </a>
+      );
+    }
+    return part;
+  });
 }
 
 function App() {
