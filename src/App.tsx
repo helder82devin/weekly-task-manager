@@ -800,21 +800,37 @@ function App() {
 
   const handleFocusViewDragEnd = useCallback(
     (event: DragEndEvent) => {
-      if (!data) return;
+      if (!data || !selectedWeekId) return;
       const { active, over } = event;
       if (!over || active.id === over.id) return;
 
-      const currentOrder = data.focusViewOrder || [];
-      const oldIndex = currentOrder.indexOf(active.id as string);
-      const overIndex = currentOrder.indexOf(over.id as string);
+      const week = data.weeks.find((w) => w.id === selectedWeekId);
+      if (!week) return;
+
+      const urgentTaskIds: string[] = [];
+      for (const snapshot of week.projects) {
+        for (const task of snapshot.tasks) {
+          if (task.urgent && !task.completed) {
+            urgentTaskIds.push(task.id);
+          }
+        }
+      }
+
+      const focusViewOrder = data.focusViewOrder || [];
+      const orderedTaskIds = focusViewOrder.filter((id) => urgentTaskIds.includes(id));
+      const unorderedTaskIds = urgentTaskIds.filter((id) => !orderedTaskIds.includes(id));
+      const allTaskIds = [...orderedTaskIds, ...unorderedTaskIds];
+
+      const oldIndex = allTaskIds.indexOf(active.id as string);
+      const overIndex = allTaskIds.indexOf(over.id as string);
 
       if (oldIndex === -1 || overIndex === -1) return;
 
-      const newOrder = arrayMove(currentOrder, oldIndex, overIndex);
+      const newOrder = arrayMove(allTaskIds, oldIndex, overIndex);
       const newData = updateFocusViewOrder(data, newOrder);
       persist(newData);
     },
-    [data, persist]
+    [data, selectedWeekId, persist]
   );
 
   // Sidebar resize handlers
