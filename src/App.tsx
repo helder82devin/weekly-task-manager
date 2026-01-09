@@ -402,6 +402,8 @@ function renderTaskTextWithLinks(text: string): React.ReactNode {
       // Reset regex lastIndex since we're using global flag
       URL_REGEX.lastIndex = 0;
       return (
+        <>
+          <span>{'('}</span>
         <a
           key={index}
           href={part}
@@ -410,8 +412,10 @@ function renderTaskTextWithLinks(text: string): React.ReactNode {
           className="text-solarized-blue hover:underline"
           onClick={(e) => e.stopPropagation()}
         >
-          (link)
-        </a>
+          link
+          </a>
+          <span>{')'}</span>
+        </>
       );
     }
     return part;
