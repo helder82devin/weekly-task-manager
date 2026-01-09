@@ -421,6 +421,10 @@ export function addTaskToFocusViewOrder(
   taskId: string
 ): StorageRoot {
   const currentOrder = data.focusViewOrder || [];
+  // Don't add if already in order (idempotent)
+  if (currentOrder.includes(taskId)) {
+    return data;
+  }
   // Add new task to the bottom of the focus view order
   return {
     ...data,
