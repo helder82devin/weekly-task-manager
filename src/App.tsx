@@ -27,6 +27,9 @@ import {
   ensureProjectInWeek,
   reorderTasks,
   reorderProjects,
+  updateFocusViewOrder,
+  addTaskToFocusViewOrder,
+  removeTaskFromFocusViewOrder,
 } from "./storage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -284,6 +287,79 @@ function SortableProject({
   );
 }
 
+// Sortable Focus Task Component for Focus View
+function SortableFocusTask({
+  task,
+  projectId,
+  projectTitle,
+  weekId,
+  canEdit,
+  handleToggleTaskComplete,
+  handleToggleTaskUrgent,
+}: {
+  task: Task;
+  projectId: string;
+  projectTitle: string;
+  weekId: string;
+  canEdit: boolean;
+  handleToggleTaskComplete: (weekId: string, projectId: string, taskId: string, completed: boolean) => void;
+  handleToggleTaskUrgent: (weekId: string, projectId: string, taskId: string, urgent: boolean) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: task.id, disabled: !canEdit });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="flex items-center gap-3 p-3 border border-solarized-base2 rounded-lg bg-solarized-base3"
+    >
+      {canEdit && (
+        <div {...attributes} {...listeners} className="cursor-grab">
+          <GripVertical className="h-4 w-4 text-solarized-base1" />
+        </div>
+      )}
+      <Checkbox
+        checked={task.completed}
+        onCheckedChange={(checked) =>
+          canEdit &&
+          handleToggleTaskComplete(weekId, projectId, task.id, checked as boolean)
+        }
+        disabled={!canEdit}
+        className="border-solarized-red"
+      />
+      <div className="flex-1">
+        <span className="font-bold text-solarized-red">{renderTaskTextWithLinks(task.text)}</span>
+        <span className="text-xs text-solarized-base1 ml-2">({projectTitle})</span>
+      </div>
+      {canEdit && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 w-6 p-0 text-solarized-base1"
+          onClick={() =>
+            handleToggleTaskUrgent(weekId, projectId, task.id, false)
+          }
+        >
+          <X className="h-3 w-3" />
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
   return date.toLocaleDateString("en-US", {
@@ -493,7 +569,17 @@ function App() {
         }
       }
 
-      const newData = updateTask(data, weekId, projectId, taskId, { urgent });
+      let newData = updateTask(data, weekId, projectId, taskId, { urgent });
+      
+      // Update focus view order when toggling urgency
+      if (urgent) {
+        // Add to bottom of focus view order when marking as urgent
+        newData = addTaskToFocusViewOrder(newData, taskId);
+      } else {
+        // Remove from focus view order when unmarking as urgent
+        newData = removeTaskFromFocusViewOrder(newData, taskId);
+      }
+      
       persist(newData);
     },
     [data, persist]
@@ -707,6 +793,25 @@ function App() {
         : reorderedWithoutBAU.map((p) => p.id);
 
       const newData = reorderProjects(data, newProjectIds);
+      persist(newData);
+    },
+    [data, persist]
+  );
+
+  const handleFocusViewDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      if (!data) return;
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+
+      const currentOrder = data.focusViewOrder || [];
+      const oldIndex = currentOrder.indexOf(active.id as string);
+      const overIndex = currentOrder.indexOf(over.id as string);
+
+      if (oldIndex === -1 || overIndex === -1) return;
+
+      const newOrder = arrayMove(currentOrder, oldIndex, overIndex);
+      const newData = updateFocusViewOrder(data, newOrder);
       persist(newData);
     },
     [data, persist]
@@ -1012,13 +1117,13 @@ function App() {
   const renderFocusView = () => {
     if (!selectedWeek) return null;
 
-    const urgentTasks: { task: Task; projectId: string; projectTitle: string }[] = [];
+    const urgentTasksMap: Map<string, { task: Task; projectId: string; projectTitle: string }> = new Map();
 
     for (const snapshot of selectedWeek.projects) {
       const project = data.projectsIndex.find((p) => p.id === snapshot.projectId);
       for (const task of snapshot.tasks) {
         if (task.urgent && !task.completed) {
-          urgentTasks.push({
+          urgentTasksMap.set(task.id, {
             task,
             projectId: snapshot.projectId,
             projectTitle: project?.title || "Unknown",
@@ -1027,48 +1132,50 @@ function App() {
       }
     }
 
+    const focusViewOrder = data.focusViewOrder || [];
+    const orderedTaskIds = focusViewOrder.filter((id) => urgentTasksMap.has(id));
+    const unorderedTaskIds = Array.from(urgentTasksMap.keys()).filter(
+      (id) => !orderedTaskIds.includes(id)
+    );
+    const allTaskIds = [...orderedTaskIds, ...unorderedTaskIds];
+
+    const sortedUrgentTasks = allTaskIds
+      .map((id) => urgentTasksMap.get(id))
+      .filter((item): item is { task: Task; projectId: string; projectTitle: string } => item !== undefined);
+
     return (
       <div>
         <h2 className="text-lg font-semibold text-solarized-base01 mb-4">
-          Focus Mode - Urgent Tasks ({urgentTasks.length})
+          Focus Mode - Urgent Tasks ({sortedUrgentTasks.length})
         </h2>
-        {urgentTasks.length === 0 ? (
+        {sortedUrgentTasks.length === 0 ? (
           <p className="text-solarized-base1 text-sm">No urgent unchecked tasks.</p>
         ) : (
-          <div className="space-y-2">
-            {urgentTasks.map(({ task, projectId, projectTitle }) => (
-              <div
-                key={task.id}
-                className="flex items-center gap-3 p-3 border border-solarized-base2 rounded-lg bg-solarized-base3"
-              >
-                <Checkbox
-                  checked={task.completed}
-                  onCheckedChange={(checked) =>
-                    canEdit &&
-                    handleToggleTaskComplete(selectedWeek.id, projectId, task.id, checked as boolean)
-                  }
-                  disabled={!canEdit}
-                  className="border-solarized-red"
-                />
-                <div className="flex-1">
-                  <span className="font-bold text-solarized-red">{task.text}</span>
-                  <span className="text-xs text-solarized-base1 ml-2">({projectTitle})</span>
-                </div>
-                {canEdit && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0 text-solarized-base1"
-                    onClick={() =>
-                      handleToggleTaskUrgent(selectedWeek.id, projectId, task.id, false)
-                    }
-                  >
-                    <X className="h-3 w-3" />
-                  </Button>
-                )}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleFocusViewDragEnd}
+          >
+            <SortableContext
+              items={allTaskIds}
+              strategy={verticalListSortingStrategy}
+            >
+              <div className="space-y-2">
+                {sortedUrgentTasks.map(({ task, projectId, projectTitle }) => (
+                  <SortableFocusTask
+                    key={task.id}
+                    task={task}
+                    projectId={projectId}
+                    projectTitle={projectTitle}
+                    weekId={selectedWeek.id}
+                    canEdit={canEdit}
+                    handleToggleTaskComplete={handleToggleTaskComplete}
+                    handleToggleTaskUrgent={handleToggleTaskUrgent}
+                  />
+                ))}
               </div>
-            ))}
-          </div>
+            </SortableContext>
+          </DndContext>
         )}
       </div>
     );

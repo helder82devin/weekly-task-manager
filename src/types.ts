@@ -32,6 +32,7 @@ export interface StorageRoot {
   weeks: Week[];
   activeWeekId: string;
   projectsIndex: ProjectIndex[];
+  focusViewOrder?: string[]; // Array of task IDs for focus view ordering
 }
 
 export interface ExportData {

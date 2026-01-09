@@ -405,3 +405,36 @@ export function reorderProjects(
     projectsIndex: reorderedProjects,
   };
 }
+
+export function updateFocusViewOrder(
+  data: StorageRoot,
+  taskIds: string[]
+): StorageRoot {
+  return {
+    ...data,
+    focusViewOrder: taskIds,
+  };
+}
+
+export function addTaskToFocusViewOrder(
+  data: StorageRoot,
+  taskId: string
+): StorageRoot {
+  const currentOrder = data.focusViewOrder || [];
+  // Add new task to the bottom of the focus view order
+  return {
+    ...data,
+    focusViewOrder: [...currentOrder, taskId],
+  };
+}
+
+export function removeTaskFromFocusViewOrder(
+  data: StorageRoot,
+  taskId: string
+): StorageRoot {
+  const currentOrder = data.focusViewOrder || [];
+  return {
+    ...data,
+    focusViewOrder: currentOrder.filter((id) => id !== taskId),
+  };
+}
